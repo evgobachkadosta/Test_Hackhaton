@@ -50,5 +50,5 @@ pub struct FtpJwtClaims {
     pub exp: usize,
     pub claim: String,
     pub sub: String,
-    pub jti: u64
+    pub jti: String
 }

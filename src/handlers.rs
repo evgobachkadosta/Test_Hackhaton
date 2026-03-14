@@ -1,6 +1,12 @@
 use axum::{extract::State, Json, http::StatusCode};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use std::time::{SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+use sha2::{Sha256, Digest};
+use rsa::pkcs1v15::SigningKey;
+use rsa::signature::{Signer, SignatureEncoding};
+use rsa::pkcs8::DecodePrivateKey;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 use crate::payloads::{
     ExchangeTokenRequest, IssueTokenRequest, IssuerMetadataResponse,
@@ -15,7 +21,7 @@ fn now_secs() -> u64 {
 
 fn issue_jwt(state: &SharedIssuerState, claim: &str, subject: &str) -> Result<(String, usize), StatusCode> {
     let exp = now_secs() as usize + state.ttl as usize;
-    let claims = FtpJwtClaims { iss: state.issuer_id.clone(), exp, claim: claim.to_string(), sub: subject.to_string(),  jti: rand::random()};
+    let claims = FtpJwtClaims { iss: state.issuer_id.clone(), exp, claim: claim.to_string(), sub: subject.to_string(), jti: Uuid::new_v4().to_string()};
     let key = EncodingKey::from_rsa_pem(state.private_key_pem.as_bytes())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let token = encode(&Header::new(Algorithm::RS256), &claims, &key)
@@ -126,15 +132,33 @@ pub async fn verify_token(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // TODO MD5
-    let nullifier = format!("{:x}", md5::compute(payload.token.as_bytes()));
+    let mut hasher = Sha256::new();
+    hasher.update(payload.token.as_bytes());
+    let nullifier = format!("{:x}", hasher.finalize());
+
     if !state.nullifiers.write().await.insert(nullifier) {
         tracing::warn!("{}: verify_token token already spent (replay attempt)", state.issuer_id);
         return Err(StatusCode::FORBIDDEN);
     }
 
     // TODO actually sign with key
-    let nonce_sig = payload.nonce.map(|n| format!("sig_over_{}", n));
+    let nonce_sig = if let Some(nonce) = payload.nonce {
+        let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&state.private_key_pem)
+            .map_err(|e| {
+                tracing::error!("{}: failed to parse private key for signing: {}", state.issuer_id, e);
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            
+        let signing_key = SigningKey::<Sha256>::new(private_key);
+        
+        let data_to_sign = format!("{}:{}:{}", state.issuer_id, payload.token, nonce);
+        
+        // Sign and Base64 encode
+        let signature = signing_key.sign(data_to_sign.as_bytes());
+        Some(STANDARD.encode(signature.to_bytes()))
+    } else {
+        None
+    };
     tracing::info!("{}: ✅ verified token for claim '{}'", state.issuer_id, token_data.claims.claim);
 
     Ok(Json(serde_json::json!({

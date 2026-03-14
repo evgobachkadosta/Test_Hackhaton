@@ -14,7 +14,7 @@ serde            = { version = "1", features = ["derive"] }
 serde_json       = "1"
 jsonwebtoken     = "9"
 reqwest          = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-rsa              = "0.9"
+rsa              = { version = "0.9", features = ["pem", "sha2"] }
 pkcs8            = { version = "0.10", features = ["pem"] }
 num-bigint       = "0.4"
 rand             = "0.8"
@@ -23,3 +23,5 @@ md5              = "0.7"
 clap             = { version = "4", features = ["derive"] }
 tracing          = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+sha2             = "0.10"
+uuid             = { version = "1.10", features = ["v4"] }

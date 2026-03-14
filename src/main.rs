@@ -13,10 +13,8 @@ use tokio::sync::RwLock;
 
 use states::{IssuerState, Jwk, SharedIssuerState};
 
-// ── CLI ────────────────────────────────────────────────────────────────────────
-
 #[derive(Parser, Debug)]
-#[command(name = "fctp-node", about = "FCTP Issuer Node (PoC)")]
+#[command(name = "fctp-node", about = "FCTP Issuer")]
 struct Args {
     /// Public base URL, e.g. http://localhost:3000  (no trailing slash)
     #[arg(long)]
