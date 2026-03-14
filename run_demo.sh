@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# FTP Demo  —  Europe → Bulgaria → Sofia
-#                       └→ Romania
-#             Bulgaria  → Sofia
-#             Bulgaria  → Petrich
+# FCTP Demo  —  Europe → Bulgaria → Sofia
+#                        └→ Romania
+#              Bulgaria  → Sofia
+#              Bulgaria  → Petrich
 #
 # Topology:
 #
@@ -16,11 +16,14 @@
 # Trust flows downward.  Europe's trust cache will contain all 4 children.
 # Sofia uses verification_delegation=call — so when a Sofia token is exchanged
 # at Europe, Europe calls Sofia's /verify_token instead of verifying locally.
+#
+# Parent relationships are declared by the node operator at startup via
+# --parents flags (no automated registration).
 # ─────────────────────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-BIN="./target/release/ftp-node"
+BIN="./target/release/fctp-node"
 PIDS=()
 
 # ── Colours ───────────────────────────────────────────────────────────────────
@@ -43,7 +46,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Build ─────────────────────────────────────────────────────────────────────
-header "Building ftp-node"
+header "Building fctp-node"
 cargo build --release 2>&1 | tail -3
 ok "Build complete"
 
@@ -59,26 +62,30 @@ start_node() {
 
 mkdir -p logs
 
-# Leaf nodes first — they don't trust anything themselves
+# Leaf nodes — parents declared by operator config (--parents flag)
 start_node sofia    --issuer-id http://localhost:3003 --display-name "Sofia"    --port 3003 \
     --claims nationality:BG --claims resident_of:BG-22 \
+    --parents http://localhost:3002 \
     --ttl 3600 --verification-delegation call
 
 start_node petrich  --issuer-id http://localhost:3004 --display-name "Petrich"  --port 3004 \
     --claims nationality:BG --claims resident_of:BG-06 \
+    --parents http://localhost:3002 \
     --ttl 3600
 
 start_node romania  --issuer-id http://localhost:3005 --display-name "Romania"  --port 3005 \
     --claims nationality:RO --claims resident_of:RO \
+    --parents http://localhost:3001 \
     --ttl 3600
 
-# Bulgaria trusts Sofia and Petrich
+# Bulgaria trusts Sofia and Petrich; its parent is Europe
 start_node bulgaria --issuer-id http://localhost:3002 --display-name "Bulgaria" --port 3002 \
     --trusts http://localhost:3003 --trusts http://localhost:3004 \
     --claims nationality:BG \
+    --parents http://localhost:3001 \
     --ttl 7200
 
-# Europe trusts Bulgaria and Romania
+# Europe trusts Bulgaria and Romania; no parents (root-level issuer)
 start_node europe   --issuer-id http://localhost:3001 --display-name "Europe"   --port 3001 \
     --trusts http://localhost:3002 --trusts http://localhost:3005 \
     --claims nationality:EU \
@@ -86,9 +93,11 @@ start_node europe   --issuer-id http://localhost:3001 --display-name "Europe"   
 
 ok "All 5 nodes started"
 
-# ── Wait for startup + registration + initial crawl ───────────────────────────
-header "Waiting for nodes to register and crawl (8s)…"
-sleep 8
+# ── Wait for startup + initial crawl ──────────────────────────────────────────
+# No registration round-trips needed — parents are static config.
+# Just wait for nodes to bind and complete their first background crawl.
+header "Waiting for nodes to start and crawl (5s)…"
+sleep 5
 ok "Ready"
 
 # ── Helper: pretty-print JSON ─────────────────────────────────────────────────
@@ -98,20 +107,21 @@ pp() { python3 -m json.tool 2>/dev/null || cat; }
 header "STEP 1 — Inspect Europe's trust graph"
 # ─────────────────────────────────────────────────────────────────────────────
 
-step "GET http://localhost:3001/.well-known/ftp-issuer"
-EUROPE_META=$(curl -sf http://localhost:3001/.well-known/ftp-issuer)
+step "GET http://localhost:3001/.well-known/fctp-issuer"
+EUROPE_META=$(curl -sf http://localhost:3001/.well-known/fctp-issuer)
 echo "$EUROPE_META" | pp
 info "Europe trusts: $(echo "$EUROPE_META" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['trusts'])")"
 
-step "GET http://localhost:3002/.well-known/ftp-issuer  (Bulgaria)"
-BG_META=$(curl -sf http://localhost:3002/.well-known/ftp-issuer)
+step "GET http://localhost:3002/.well-known/fctp-issuer  (Bulgaria)"
+BG_META=$(curl -sf http://localhost:3002/.well-known/fctp-issuer)
 echo "$BG_META" | pp
 info "Bulgaria parents: $(echo "$BG_META" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['parents'])")"
 
-step "GET http://localhost:3003/.well-known/ftp-issuer  (Sofia)"
-SOFIA_META=$(curl -sf http://localhost:3003/.well-known/ftp-issuer)
+step "GET http://localhost:3003/.well-known/fctp-issuer  (Sofia)"
+SOFIA_META=$(curl -sf http://localhost:3003/.well-known/fctp-issuer)
 echo "$SOFIA_META" | pp
 info "Sofia delegation: $(echo "$SOFIA_META" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['verification_delegation'])")"
+info "Sofia parents:    $(echo "$SOFIA_META" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['parents'])")"
 
 # ─────────────────────────────────────────────────────────────────────────────
 header "STEP 2 — Mint a leaf token at Sofia"
