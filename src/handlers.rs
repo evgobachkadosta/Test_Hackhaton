@@ -141,7 +141,6 @@ pub async fn verify_token(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // TODO actually sign with key
     let nonce_sig = if let Some(nonce) = payload.nonce {
         let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&state.private_key_pem)
             .map_err(|e| {
@@ -153,7 +152,6 @@ pub async fn verify_token(
         
         let data_to_sign = format!("{}:{}:{}", state.issuer_id, payload.token, nonce);
         
-        // Sign and Base64 encode
         let signature = signing_key.sign(data_to_sign.as_bytes());
         Some(STANDARD.encode(signature.to_bytes()))
     } else {
@@ -181,7 +179,7 @@ pub async fn issue_token(
     let (token, expires_at) = issue_jwt(&state, &payload.claim, "user")?;
     tracing::info!("{}: 🪙  minted leaf token for claim '{}'", state.issuer_id, payload.claim);
     Ok(Json(serde_json::json!({
-        "token":      token,
+        "token":      [token],
         "token_type": "jwt",
         "issuer_id":  state.issuer_id,
         "claim":      payload.claim,

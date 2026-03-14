@@ -173,7 +173,7 @@ step "Mint Sofia token"
 PT_RESP=$(curl -s -X POST http://localhost:3003/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 ok "Sofia token minted"
 
 info "Verifying Sofia appears in cache (reachable via 3 paths but stored once)…"
@@ -194,7 +194,7 @@ step "Mint VerifyEvil token"
 PT_RESP=$(curl -s -X POST http://localhost:3009/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 ok "VerifyEvil token minted"
 
 step "Verify Evil (3009) is NOT in Europe's trust cache (origin mismatch)"
@@ -228,7 +228,7 @@ step "Mint Petrich token"
 PT_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 ok "Petrich token minted"
 
 step "Single-hop exchange at Europe"
@@ -251,7 +251,7 @@ step "Mint Sofia token"
 SOFIA_RESP=$(curl -s -X POST http://localhost:3003/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-SOFIA_TOKEN=$(echo "$SOFIA_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+SOFIA_TOKEN=$(echo "$SOFIA_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 ok "Sofia token minted"
 
 step "First exchange (burns nullifier at Sofia)"
@@ -310,7 +310,7 @@ step "Mint fresh Petrich token"
 PT2_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-PT2_TOKEN=$(echo "$PT2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+PT2_TOKEN=$(echo "$PT2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 
 step "Exchange with mismatched claim (token=nationality:BG, request=nationality:RO)"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3001/exchange_token \
@@ -331,7 +331,7 @@ step "Mint fresh Petrich token, claim it is from Romania"
 PT3_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-PT3_TOKEN=$(echo "$PT3_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+PT3_TOKEN=$(echo "$PT3_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 
 step "Exchange: token signed by Petrich, child_issuer_id=Romania"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3001/exchange_token \
@@ -350,7 +350,7 @@ step "Mint ShortLived token (TTL=1s)"
 SL_RESP=$(curl -s -X POST http://localhost:3010/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-SL_TOKEN=$(echo "$SL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+SL_TOKEN=$(echo "$SL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 ok "ShortLived token minted - waiting 3s for it to expire…"
 sleep 3
 
@@ -371,7 +371,7 @@ step "Mint Rogue token"
 RG_RESP=$(curl -s -X POST http://localhost:3007/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-RG_TOKEN=$(echo "$RG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+RG_TOKEN=$(echo "$RG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 
 step "Exchange Rogue token at Europe"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3001/exchange_token \
@@ -415,7 +415,7 @@ step "Mint fresh Petrich → Europe token"
 PT4_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-PT4_TOKEN=$(echo "$PT4_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+PT4_TOKEN=$(echo "$PT4_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 EU4_RESP=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
@@ -444,7 +444,7 @@ step "Mint Bulgaria token"
 BG_RESP=$(curl -s -X POST http://localhost:3002/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-BG_TOKEN=$(echo "$BG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+BG_TOKEN=$(echo "$BG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 
 step "Present Bulgaria token directly to Europe /verify_token"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:3001/verify_token \
@@ -463,7 +463,7 @@ step "Mint Sofia token, exchange via Balkans path (child_issuer_id=Sofia, target
 SOFIA2_RESP=$(curl -s -X POST http://localhost:3003/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-SOFIA2_TOKEN=$(echo "$SOFIA2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+SOFIA2_TOKEN=$(echo "$SOFIA2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 
 # Europe's cache has Sofia via both Bulgaria and Balkans paths -
 # the exchange works regardless of which path was used to cache it.
@@ -486,7 +486,7 @@ step "Verify Bulgaria is in Europe's cache (reachable via direct + Romania→Bul
 BG2_RESP=$(curl -s -X POST http://localhost:3002/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
-BG2_TOKEN=$(echo "$BG2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+BG2_TOKEN=$(echo "$BG2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'][0])")
 BG2_EXCHANGE=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
