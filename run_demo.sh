@@ -98,6 +98,7 @@ start_node petrich \
     --claims nationality:BG --claims resident_of:BG-06 \
     --parents http://localhost:3002 --parents http://localhost:3006 \
     --trusts http://localhost:3002 \
+    --verification-delegation call \
     --ttl 3600
 
 start_node romania \
@@ -105,11 +106,13 @@ start_node romania \
     --claims nationality:RO \
     --parents http://localhost:3001 \
     --trusts http://localhost:3002 \
+    --verification-delegation call \
     --ttl 3600
 
 start_node rogue \
     --issuer-id http://localhost:3007 --display-name "Rogue" --port 3007 \
     --claims nationality:BG \
+    --verification-delegation call \
     --ttl 3600
 
 # Evil node: listens on 3009 but declares issuer_id as localhost:9999
@@ -117,12 +120,14 @@ start_node rogue \
 start_node evil \
     --issuer-id http://localhost:9999 --display-name "Evil" --port 3009 \
     --claims nationality:BG \
+    --verification-delegation call \
     --ttl 3600
 
 start_node shortlived \
     --issuer-id http://localhost:3010 --display-name "ShortLived" --port 3010 \
     --claims nationality:BG \
     --parents http://localhost:3002 \
+    --verification-delegation call \
     --ttl 1
 
 # NOTE: 3008 is intentionally never started (unreachable node test)
@@ -139,6 +144,7 @@ start_node bulgaria \
     --trusts http://localhost:3009 \
     --trusts http://localhost:3008 \
     --trusts http://localhost:3010 \
+    --verification-delegation call \
     --ttl 7200
 
 start_node balkans \
@@ -147,6 +153,7 @@ start_node balkans \
     --parents http://localhost:3001 \
     --trusts http://localhost:3003 \
     --trusts http://localhost:3004 \
+    --verification-delegation call \
     --ttl 7200
 
 # ── Root ──────────────────────────────────────────────────────────────────────
@@ -157,6 +164,7 @@ start_node europe \
     --trusts http://localhost:3002 \
     --trusts http://localhost:3005 \
     --trusts http://localhost:3006 \
+    --verification-delegation call \
     --ttl 86400
 
 ok "All nodes started (3008 intentionally absent)"
@@ -173,23 +181,46 @@ header "STEP 1 — Inspect Europe's trust cache after crawl"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "GET http://localhost:3001/.well-known/fctp-issuer"
-EUROPE_META=$(curl -sf http://localhost:3001/.well-known/fctp-issuer)
+EUROPE_META=$(curl -s http://localhost:3001/.well-known/fctp-issuer)
 echo "$EUROPE_META" | pp
 
-info "Verifying Sofia appears in cache (reachable via 3 paths but stored once)…"
-SOFIA_IN_CACHE=$(curl -sf -X POST http://localhost:3001/exchange_token \
+step "Mint Sofia token"
+PT_RESP=$(curl -s -X POST http://localhost:3003/issue_token \
     -H 'Content-Type: application/json' \
-    -d '{"child_token":"dummy","child_token_type":"jwt","child_issuer_id":"http://localhost:3003","claim":"nationality:BG"}' \
+    -d '{"claim":"nationality:BG"}')
+PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+ok "Sofia token minted"
+
+info "Verifying Sofia appears in cache (reachable via 3 paths but stored once)…"
+SOFIA_IN_CACHE=$(curl -s -X POST http://localhost:3001/exchange_token \
+    -H 'Content-Type: application/json' \
+    -d "{
+        \"child_token\":\"$PT_TOKEN\",
+        \"child_token_type\":\"jwt\",
+        \"child_issuer_id\":\"http://localhost:3003\",
+        \"claim\":\"nationality:BG\"
+    }" \
     -o /dev/null -w "%{http_code}")
-# Will 403 (bad token) not 404/500 — meaning Sofia IS in the cache
-[[ "$SOFIA_IN_CACHE" == "403" ]] \
+[[ "$SOFIA_IN_CACHE" == "200" ]] \
     && ok "Sofia is in Europe's trust cache (diamond/multi-path deduplication works) ✓" \
     || fail "Sofia not found in trust cache — expected 403 on bad token, got $SOFIA_IN_CACHE"
 
-step "Verify Evil (3009) is NOT in Europe's trust cache (origin mismatch)"
-EVIL_IN_CACHE=$(curl -sf -X POST http://localhost:3001/exchange_token \
+step "Mint VerifyEvil token"
+PT_RESP=$(curl -s -X POST http://localhost:3009/issue_token \
     -H 'Content-Type: application/json' \
-    -d '{"child_token":"dummy","child_token_type":"jwt","child_issuer_id":"http://localhost:3009","claim":"nationality:BG"}' \
+    -d '{"claim":"nationality:BG"}')
+PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+ok "VerifyEvil token minted"
+
+step "Verify Evil (3009) is NOT in Europe's trust cache (origin mismatch)"
+EVIL_IN_CACHE=$(curl -s -X POST http://localhost:3001/exchange_token \
+    -H 'Content-Type: application/json' \
+    -d "{
+        \"child_token\":\"$PT_TOKEN\",
+        \"child_token_type\":\"jwt\",
+        \"child_issuer_id\":\"http://localhost:3009\",
+        \"claim\":\"nationality:BG\"
+    }" \
     -o /dev/null -w "%{http_code}")
 [[ "$EVIL_IN_CACHE" == "403" ]] \
     && ok "Evil (3009) correctly absent from trust cache — origin mismatch blocked it ✓" \
@@ -201,7 +232,7 @@ grep -i "origin mismatch" logs/bulgaria.log \
     || info "  (warning may be in europe/balkans log instead — check manually)"
 
 step "Verify unreachable node (3008) did not crash the crawl"
-BULGARIA_RESP=$(curl -sf http://localhost:3002/.well-known/fctp-issuer)
+BULGARIA_RESP=$(curl -s http://localhost:3002/.well-known/fctp-issuer)
 echo "$BULGARIA_RESP" | pp
 ok "Bulgaria metadata still served — unreachable 3008 skipped gracefully ✓"
 
@@ -211,14 +242,14 @@ header "STEP 2 — Happy path: deep chain Petrich → Europe (cycle-safe)"
 # Petrich trusts Bulgaria (cycle), but the BFS visited set prevents looping.
 
 step "Mint Petrich token"
-PT_RESP=$(curl -sf -X POST http://localhost:3004/issue_token \
+PT_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 PT_TOKEN=$(echo "$PT_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 ok "Petrich token minted"
 
 step "Single-hop exchange at Europe"
-PT_EXCHANGE=$(curl -sf -X POST http://localhost:3001/exchange_token \
+PT_EXCHANGE=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
         \"child_token\":      \"$PT_TOKEN\",
@@ -236,14 +267,14 @@ header "STEP 3 — delegation=call: Sofia → Europe nullifier burn + replay"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Mint Sofia token"
-SOFIA_RESP=$(curl -sf -X POST http://localhost:3003/issue_token \
+SOFIA_RESP=$(curl -s -X POST http://localhost:3003/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 SOFIA_TOKEN=$(echo "$SOFIA_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 ok "Sofia token minted"
 
 step "First exchange (burns nullifier at Sofia)"
-SOFIA_EXCHANGE=$(curl -sf -X POST http://localhost:3001/exchange_token \
+SOFIA_EXCHANGE=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
         \"child_token\":      \"$SOFIA_TOKEN\",
@@ -271,7 +302,7 @@ header "STEP 4 — Europe token: first verify succeeds, replay rejected"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "First verify (should succeed)"
-VERIFY_RESP=$(curl -sf -X POST http://localhost:3001/verify_token \
+VERIFY_RESP=$(curl -s -X POST http://localhost:3001/verify_token \
     -H 'Content-Type: application/json' \
     -d "{
         \"token\":      \"$EUROPE_TOKEN_SOFIA\",
@@ -299,7 +330,7 @@ header "STEP 5 — Wrong claim in exchange_token"
 # Petrich token carries nationality:BG — present it claiming nationality:RO
 
 step "Mint fresh Petrich token"
-PT2_RESP=$(curl -sf -X POST http://localhost:3004/issue_token \
+PT2_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 PT2_TOKEN=$(echo "$PT2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -322,7 +353,7 @@ header "STEP 6 — Token issuer / child_issuer_id mismatch (key mismatch)"
 # Europe will try to verify it with Romania's public key → signature failure.
 
 step "Mint fresh Petrich token, claim it is from Romania"
-PT3_RESP=$(curl -sf -X POST http://localhost:3004/issue_token \
+PT3_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 PT3_TOKEN=$(echo "$PT3_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -343,7 +374,7 @@ header "STEP 7 — Expired token rejected"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Mint ShortLived token (TTL=1s)"
-SL_RESP=$(curl -sf -X POST http://localhost:3010/issue_token \
+SL_RESP=$(curl -s -X POST http://localhost:3010/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 SL_TOKEN=$(echo "$SL_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -366,7 +397,7 @@ header "STEP 8 — Rogue token rejected (not in trust cache)"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Mint Rogue token"
-RG_RESP=$(curl -sf -X POST http://localhost:3007/issue_token \
+RG_RESP=$(curl -s -X POST http://localhost:3007/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 RG_TOKEN=$(echo "$RG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -414,11 +445,11 @@ header "STEP 10 — Wrong claim on verify_token"
 # Issue a fresh Europe token for nationality:BG, then verify with wrong claim.
 
 step "Mint fresh Petrich → Europe token"
-PT4_RESP=$(curl -sf -X POST http://localhost:3004/issue_token \
+PT4_RESP=$(curl -s -X POST http://localhost:3004/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 PT4_TOKEN=$(echo "$PT4_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-EU4_RESP=$(curl -sf -X POST http://localhost:3001/exchange_token \
+EU4_RESP=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
         \"child_token\":      \"$PT4_TOKEN\",
@@ -445,7 +476,7 @@ header "STEP 11 — Token from wrong issuer on verify_token (key mismatch)"
 # Europe will try to verify it with its own public key → signature failure.
 
 step "Mint Bulgaria token"
-BG_RESP=$(curl -sf -X POST http://localhost:3002/issue_token \
+BG_RESP=$(curl -s -X POST http://localhost:3002/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 BG_TOKEN=$(echo "$BG_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
@@ -466,14 +497,14 @@ header "STEP 12 — Balkans path (Sofia/Petrich via different mid-tier)"
 # Confirms Sofia is reachable through Balkans as well as Bulgaria.
 
 step "Mint Sofia token, exchange via Balkans path (child_issuer_id=Sofia, target=Europe)"
-SOFIA2_RESP=$(curl -sf -X POST http://localhost:3003/issue_token \
+SOFIA2_RESP=$(curl -s -X POST http://localhost:3003/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 SOFIA2_TOKEN=$(echo "$SOFIA2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 
 # Europe's cache has Sofia via both Bulgaria and Balkans paths —
 # the exchange works regardless of which path was used to cache it.
-SOFIA2_EXCHANGE=$(curl -sf -X POST http://localhost:3001/exchange_token \
+SOFIA2_EXCHANGE=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
         \"child_token\":      \"$SOFIA2_TOKEN\",
@@ -491,11 +522,11 @@ header "STEP 13 — Diamond: Romania→Bulgaria path"
 # Bulgaria should appear in Europe's cache exactly once.
 
 step "Verify Bulgaria is in Europe's cache (reachable via direct + Romania→Bulgaria)"
-BG2_RESP=$(curl -sf -X POST http://localhost:3002/issue_token \
+BG2_RESP=$(curl -s -X POST http://localhost:3002/issue_token \
     -H 'Content-Type: application/json' \
     -d '{"claim":"nationality:BG"}')
 BG2_TOKEN=$(echo "$BG2_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-BG2_EXCHANGE=$(curl -sf -X POST http://localhost:3001/exchange_token \
+BG2_EXCHANGE=$(curl -s -X POST http://localhost:3001/exchange_token \
     -H 'Content-Type: application/json' \
     -d "{
         \"child_token\":      \"$BG2_TOKEN\",
@@ -536,4 +567,4 @@ echo ""
 echo "Nodes still running. Ctrl-C to stop."
 echo ""
 
-sleep infinity
+gsleep infinity

@@ -14,9 +14,9 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
 }
 
-fn issue_jwt(state: &SharedIssuerState, claim: &str) -> Result<(String, usize), StatusCode> {
+fn issue_jwt(state: &SharedIssuerState, claim: &str, subject: &str) -> Result<(String, usize), StatusCode> {
     let exp = now_secs() as usize + state.ttl as usize;
-    let claims = FtpJwtClaims { iss: state.issuer_id.clone(), exp, claim: claim.to_string() };
+    let claims = FtpJwtClaims { iss: state.issuer_id.clone(), exp, claim: claim.to_string(), sub: subject.to_string(),  jti: rand::random()};
     let key = EncodingKey::from_rsa_pem(state.private_key_pem.as_bytes())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let token = encode(&Header::new(Algorithm::RS256), &claims, &key)
@@ -108,23 +108,11 @@ pub async fn exchange_token(
             return Err(StatusCode::FORBIDDEN);
         }
     } else {
-        // Local: cryptographic verification against the cached public key.
-        let dk = decoding_key_for(&child_node.public_key.n, &child_node.public_key.e)?;
-        let token_data = decode::<FtpJwtClaims>(
-            &payload.child_token, &dk, &fctp_validation(&payload.child_issuer_id),
-        ).map_err(|e| {
-            tracing::warn!("{}: invalid child JWT: {}", state.issuer_id, e);
-            StatusCode::FORBIDDEN
-        })?;
-
-        if token_data.claims.claim != payload.claim {
-            tracing::warn!("{}: claim mismatch (token='{}', wanted '{}')", state.issuer_id, token_data.claims.claim, payload.claim);
-            return Err(StatusCode::FORBIDDEN);
-        }
+        return Err(StatusCode::BAD_REQUEST);
     }
 
     // 3. Issue fresh token signed by this issuer ───────────────────────────────
-    let (fresh_token, expires_at) = issue_jwt(&state, &payload.claim)?;
+    let (fresh_token, expires_at) = issue_jwt(&state, &payload.claim, "user")?;
     tracing::info!("{}: 🎫 issued fresh token for '{}' (child: '{}')", state.issuer_id, payload.claim, payload.child_issuer_id);
 
     Ok(Json(serde_json::json!({
@@ -149,6 +137,11 @@ pub async fn verify_token(
     let dk = decoding_key_for(&state.public_key_jwk.n, &state.public_key_jwk.e)?;
     let token_data = decode::<FtpJwtClaims>(&payload.token, &dk, &fctp_validation(&state.issuer_id))
         .map_err(|e| { tracing::warn!("{}: verify_token invalid JWT: {}", state.issuer_id, e); StatusCode::FORBIDDEN })?;
+
+    if now_secs() as usize > token_data.claims.exp {
+        tracing::warn!("{}: expired token for expiry time {} on current time {}", state.issuer_id, token_data.claims.exp, now_secs() as usize);
+        return Err(StatusCode::FORBIDDEN);
+    }
 
     if token_data.claims.claim != payload.claim {
         tracing::warn!("{}: verify_token claim mismatch (token='{}', request='{}')", state.issuer_id, token_data.claims.claim, payload.claim);
@@ -186,7 +179,7 @@ pub async fn issue_token(
         tracing::warn!("{}: issue_token claim '{}' not supported", state.issuer_id, payload.claim);
         return Err(StatusCode::FORBIDDEN);
     }
-    let (token, expires_at) = issue_jwt(&state, &payload.claim)?;
+    let (token, expires_at) = issue_jwt(&state, &payload.claim, "user")?;
     tracing::info!("{}: 🪙  minted leaf token for claim '{}'", state.issuer_id, payload.claim);
     Ok(Json(serde_json::json!({
         "token":      token,
