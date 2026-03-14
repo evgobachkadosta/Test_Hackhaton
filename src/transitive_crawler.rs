@@ -3,6 +3,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::payloads::IssuerMetadataResponse;
 use crate::states::{CachedNode, SharedIssuerState};
 
+/// Returns true if the scheme+authority (origin) of `fetched_url` exactly
+/// matches the scheme+authority declared as `issuer_id` in the metadata.
+/// Per spec §4.1 Origin Matching Rule.
+fn origins_match(fetched_url: &str, declared_issuer_id: &str) -> bool {
+    fn extract_origin(url: &str) -> Option<&str> {
+        // Expect "scheme://authority/path" — origin is everything up to the
+        // third slash (or end of string if no path slash exists).
+        let after_scheme = url.find("://").map(|i| i + 3)?;
+        let rest = &url[after_scheme..];
+        let authority_end = rest.find('/').unwrap_or(rest.len());
+        let origin_end = after_scheme + authority_end;
+        // Include the scheme prefix: url[..origin_end]
+        Some(&url[..origin_end])
+    }
+
+    match (extract_origin(fetched_url), extract_origin(declared_issuer_id)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Rebuild the transitive trust cache via iterative BFS.
 /// Iterative (not async-recursive) to avoid &mut-across-await Send errors.
 pub async fn execute_crawl(state: SharedIssuerState) {
@@ -22,7 +43,7 @@ pub async fn execute_crawl(state: SharedIssuerState) {
         }
         visited.insert(target_id.clone());
 
-        let url = format!("{}/.well-known/ftp-issuer", target_id);
+        let url = format!("{}/.well-known/fctp-issuer", target_id);
         let metadata: IssuerMetadataResponse = match state.http_client.get(&url).send().await {
             Err(e) => { eprintln!("[WARN]  crawl: GET {} failed: {}", url, e); continue; }
             Ok(resp) => match resp.json::<IssuerMetadataResponse>().await {
@@ -30,6 +51,18 @@ pub async fn execute_crawl(state: SharedIssuerState) {
                 Ok(m) => m,
             },
         };
+
+        // ── Origin Matching Rule (spec §4.1) ───────────────────────────────────
+        // The origin of the URL we fetched MUST match the issuer_id declared
+        // in the returned metadata. Prevents a compromised node from injecting
+        // a foreign issuer_id into the trust cache.
+        if !origins_match(&url, &metadata.issuer_id) {
+            eprintln!(
+                "[WARN]  crawl: origin mismatch for '{}' — declared issuer_id '{}' does not match fetch origin; skipping",
+                url, metadata.issuer_id
+            );
+            continue;
+        }
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         new_cache.insert(target_id.clone(), CachedNode {
