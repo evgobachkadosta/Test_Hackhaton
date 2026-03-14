@@ -1,28 +1,23 @@
 use serde::{Deserialize, Serialize};
 use crate::states::Jwk;
 
-// ── Issuer metadata ────────────────────────────────────────────────────────────
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IssuerMetadataResponse {
     pub issuer_id: String,
     pub display_name: String,
-    /// "local" or "call".
     pub verification_delegation: String,
     pub public_key: Jwk,
     pub token_formats: Vec<String>,
-    pub claims: Vec<String>,
+    pub claim: String,
     pub trusts: Vec<String>,
     pub parents: Vec<String>,
     pub ttl: u64,
 }
 
-// ── /register_parent ───────────────────────────────────────────────────────────
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterParentRequest {
     pub parent_id: String,
-    /// Parent's public key — used to verify the signature JWT below.
+    // Parent's public key - used to verify the signature JWT below.
     pub public_key: Jwk,
     /// RS256 JWT signed by the parent's private key.
     /// Claims: { iss: parent_id, sub: child_id, exp: <short> }
@@ -38,8 +33,6 @@ pub struct RegisterParentClaims {
     pub exp: usize,
 }
 
-// ── /exchange_token ────────────────────────────────────────────────────────────
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExchangeTokenRequest {
     pub child_token: String,
@@ -48,8 +41,6 @@ pub struct ExchangeTokenRequest {
     pub claim: String,
 }
 
-// ── /verify_token ──────────────────────────────────────────────────────────────
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VerifyTokenRequest {
     pub token: String,
@@ -57,8 +48,6 @@ pub struct VerifyTokenRequest {
     pub claim: String,
     pub nonce: Option<String>,
 }
-
-// ── /issue_token (demo-only) ───────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IssueTokenRequest {

@@ -30,28 +30,27 @@ struct Args {
     #[arg(long)]
     port: u16,
 
-    /// Issuer IDs this node directly trusts (repeat for multiple)
+    /// Issuer IDs this node directly trusts
     #[arg(long)]
     trusts: Vec<String>,
 
-    /// Issuer IDs that are parents of this node — set by the administrator (repeat for multiple)
+    /// Issuer IDs that are parents of this node
     #[arg(long)]
     parents: Vec<String>,
 
-    /// Claims this node can issue (repeat for multiple)
+    // The claim this Issuer gives
     #[arg(long)]
-    claims: Vec<String>,
+    claim: String,
 
-    /// Cache / token TTL in seconds
+    /// Cache / public key TTL in seconds
     #[arg(long, default_value = "3600")]
     ttl: u64,
 
-    /// How parents should verify our tokens: "local" or "call"
-    #[arg(long, default_value = "local")]
+    // How parents should verify the tokens of this issuer
+    // Currently only supports 'call' mode
+    #[arg(long, default_value = "call")]
     verification_delegation: String,
 }
-
-// ── Entry point ────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
@@ -69,10 +68,9 @@ async fn main() {
     );
     tracing::info!("  trusts:     {:?}", args.trusts);
     tracing::info!("  parents:    {:?}", args.parents);
-    tracing::info!("  claims:     {:?}", args.claims);
+    tracing::info!("  claim:     {:?}", args.claim);
     tracing::info!("  delegation: {}", args.verification_delegation);
 
-    // ── RSA-2048 key generation ────────────────────────────────────────────────
     let mut rng = rand::thread_rng();
     let private_key = rsa::RsaPrivateKey::new(&mut rng, 2048)
         .expect("RSA-2048 keygen failed");
@@ -85,7 +83,6 @@ async fn main() {
     let private_key_pem: String = (*pem_doc).clone();
     let jwk = build_jwk(&public_key, &args.issuer_id);
 
-    // ── Shared state ───────────────────────────────────────────────────────────
     let trusts:  HashSet<String> = args.trusts.iter().cloned().collect();
     let parents: HashSet<String> = args.parents.iter().cloned().collect();
 
@@ -95,7 +92,7 @@ async fn main() {
         private_key_pem,
         public_key_jwk: jwk,
         ttl:   args.ttl,
-        claims: args.claims.clone(),
+        claim: args.claim.clone(),
         verification_delegation: args.verification_delegation.clone(),
         trusts:      RwLock::new(trusts),
         parents:     RwLock::new(parents),
@@ -104,9 +101,7 @@ async fn main() {
         http_client: reqwest::Client::new(),
     });
 
-    // ── Background crawl ───────────────────────────────────────────────────────
-    // Parents are now static admin config — no registration step needed.
-    // Just crawl direct children on startup, then re-crawl every TTL seconds.
+    // Background crawl
     {
         let bg  = state.clone();
         let ttl = args.ttl;
@@ -120,7 +115,6 @@ async fn main() {
         });
     }
 
-    // ── Router ─────────────────────────────────────────────────────────────────
     let app = Router::new()
         .route("/.well-known/fctp-issuer", get(handlers::get_metadata))
         .route("/exchange_token",          post(handlers::exchange_token))
@@ -133,8 +127,6 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.expect("bind failed");
     axum::serve(listener, app).await.expect("server error");
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
 
 fn build_jwk(public_key: &rsa::RsaPublicKey, issuer_id: &str) -> Jwk {
     let n_bytes = public_key.n().to_bytes_be();

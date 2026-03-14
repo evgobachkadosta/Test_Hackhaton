@@ -8,7 +8,6 @@ use crate::payloads::{
 };
 use crate::states::{FtpJwtClaims, SharedIssuerState};
 
-// ── helpers ────────────────────────────────────────────────────────────────────
 
 fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs()
@@ -35,8 +34,6 @@ fn fctp_validation(issuer_id: &str) -> Validation {
     v
 }
 
-// ── GET /.well-known/fctp-issuer ───────────────────────────────────────────────
-
 pub async fn get_metadata(State(state): State<SharedIssuerState>) -> Json<IssuerMetadataResponse> {
     let trusts:  Vec<String> = state.trusts.read().await.iter().cloned().collect();
     let parents: Vec<String> = state.parents.read().await.iter().cloned().collect();
@@ -46,41 +43,28 @@ pub async fn get_metadata(State(state): State<SharedIssuerState>) -> Json<Issuer
         verification_delegation: state.verification_delegation.clone(),
         public_key: state.public_key_jwk.clone(),
         token_formats: vec!["jwt".to_string()],
-        claims: state.claims.clone(),
+        claim: state.claim.clone(),
         trusts,
         parents,
         ttl: state.ttl,
     })
 }
 
-// ── POST /exchange_token ───────────────────────────────────────────────────────
-//
-// Single-hop exchange.  Two verification paths depending on the child node's
-// verification_delegation field in the trust cache:
-//
-//   "local" — verify the JWT here using the cached public key.
-//   "call"  — forward the token to the child's /verify_token endpoint.
-//             The child handles nullification, which is required when tokens
-//             cannot be verified locally (e.g. blinded schemes, or when the
-//             child wants to enforce one-time use at its own boundary).
-
 pub async fn exchange_token(
     State(state): State<SharedIssuerState>,
     Json(payload): Json<ExchangeTokenRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // 1. Trust cache lookup ────────────────────────────────────────────────────
     let child_node = {
         let cache = state.trust_cache.read().await;
         cache.get(&payload.child_issuer_id).cloned().ok_or_else(|| {
-            tracing::warn!("{}: exchange_token — '{}' not in trust cache", state.issuer_id, payload.child_issuer_id);
+            tracing::warn!("{}: exchange_token - '{}' not in trust cache", state.issuer_id, payload.child_issuer_id);
             StatusCode::FORBIDDEN
         })?
     };
 
-    // 2. Verification ──────────────────────────────────────────────────────────
     if child_node.verification_delegation == "call" {
         tracing::info!(
-            "{}: delegation=call — forwarding to {}/verify_token",
+            "{}: delegation=call - forwarding to {}/verify_token",
             state.issuer_id, payload.child_issuer_id
         );
         let url  = format!("{}/verify_token", payload.child_issuer_id);
@@ -111,7 +95,6 @@ pub async fn exchange_token(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    // 3. Issue fresh token signed by this issuer ───────────────────────────────
     let (fresh_token, expires_at) = issue_jwt(&state, &payload.claim, "user")?;
     tracing::info!("{}: 🎫 issued fresh token for '{}' (child: '{}')", state.issuer_id, payload.claim, payload.child_issuer_id);
 
@@ -124,11 +107,6 @@ pub async fn exchange_token(
         "trust_path": child_node.path,
     })))
 }
-
-// ── POST /verify_token ─────────────────────────────────────────────────────────
-//
-// Verify a token issued by *this* node.  Burns a nullifier on first use.
-// Also the endpoint called by parents when delegation="call".
 
 pub async fn verify_token(
     State(state): State<SharedIssuerState>,
@@ -148,15 +126,14 @@ pub async fn verify_token(
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // Nullifier = MD5 of the raw JWT bytes.  First use burns it.
+    // TODO MD5
     let nullifier = format!("{:x}", md5::compute(payload.token.as_bytes()));
     if !state.nullifiers.write().await.insert(nullifier) {
         tracing::warn!("{}: verify_token token already spent (replay attempt)", state.issuer_id);
         return Err(StatusCode::FORBIDDEN);
     }
 
-    // In production sign the nonce with our private key here — the client can
-    // then verify the RP actually made this call (liveness proof).
+    // TODO actually sign with key
     let nonce_sig = payload.nonce.map(|n| format!("sig_over_{}", n));
     tracing::info!("{}: ✅ verified token for claim '{}'", state.issuer_id, token_data.claims.claim);
 
@@ -169,13 +146,11 @@ pub async fn verify_token(
     })))
 }
 
-// ── POST /issue_token  (demo only — no real auth) ──────────────────────────────
-
 pub async fn issue_token(
     State(state): State<SharedIssuerState>,
     Json(payload): Json<IssueTokenRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !state.claims.contains(&payload.claim) {
+    if state.claim != payload.claim {
         tracing::warn!("{}: issue_token claim '{}' not supported", state.issuer_id, payload.claim);
         return Err(StatusCode::FORBIDDEN);
     }
