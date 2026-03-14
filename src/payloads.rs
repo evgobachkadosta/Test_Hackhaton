@@ -15,25 +15,6 @@ pub struct IssuerMetadataResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterParentRequest {
-    pub parent_id: String,
-    // Parent's public key - used to verify the signature JWT below.
-    pub public_key: Jwk,
-    /// RS256 JWT signed by the parent's private key.
-    /// Claims: { iss: parent_id, sub: child_id, exp: <short> }
-    /// The `sub` must equal this node's issuer_id.
-    pub signature: String,
-}
-
-/// Claims carried inside the register_parent signature JWT.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct RegisterParentClaims {
-    pub iss: String,  // parent_id
-    pub sub: String,  // child_id (this node's issuer_id)
-    pub exp: usize,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct ExchangeTokenRequest {
     pub child_token: String,
     pub child_token_type: String,
