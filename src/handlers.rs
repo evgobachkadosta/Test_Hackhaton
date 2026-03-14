@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::payloads::{
     ExchangeTokenRequest, IssueTokenRequest, IssuerMetadataResponse,
-    RegisterParentClaims, RegisterParentRequest, VerifyTokenRequest,
+    VerifyTokenRequest,
 };
 use crate::states::{FtpJwtClaims, SharedIssuerState};
 
@@ -28,14 +28,14 @@ fn decoding_key_for(n: &str, e: &str) -> Result<DecodingKey, StatusCode> {
     DecodingKey::from_rsa_components(n, e).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
-fn ftp_validation(issuer_id: &str) -> Validation {
+fn fctp_validation(issuer_id: &str) -> Validation {
     let mut v = Validation::new(Algorithm::RS256);
     v.validate_aud = false;
     v.set_issuer(&[issuer_id]);
     v
 }
 
-// ── GET /.well-known/ftp-issuer ────────────────────────────────────────────────
+// ── GET /.well-known/fctp-issuer ───────────────────────────────────────────────
 
 pub async fn get_metadata(State(state): State<SharedIssuerState>) -> Json<IssuerMetadataResponse> {
     let trusts:  Vec<String> = state.trusts.read().await.iter().cloned().collect();
@@ -51,42 +51,6 @@ pub async fn get_metadata(State(state): State<SharedIssuerState>) -> Json<Issuer
         parents,
         ttl: state.ttl,
     })
-}
-
-// ── POST /register_parent ──────────────────────────────────────────────────────
-//
-// `signature` is an RS256 JWT  { iss: parent_id, sub: this_issuer_id, exp }
-// signed with the parent's private key.  Verifying it with the provided JWK
-// proves the caller holds the matching key.  `sub` must equal our issuer_id
-// so the JWT cannot be replayed at a different child node.
-
-pub async fn register_parent(
-    State(state): State<SharedIssuerState>,
-    Json(payload): Json<RegisterParentRequest>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let dk = decoding_key_for(&payload.public_key.n, &payload.public_key.e)?;
-
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.validate_aud = false;
-    validation.set_issuer(&[payload.parent_id.clone()]);
-
-    let token_data = decode::<RegisterParentClaims>(&payload.signature, &dk, &validation)
-        .map_err(|e| {
-            tracing::warn!("{}: register_parent bad sig from '{}': {}", state.issuer_id, payload.parent_id, e);
-            StatusCode::FORBIDDEN
-        })?;
-
-    if token_data.claims.sub != state.issuer_id {
-        tracing::warn!(
-            "{}: register_parent sub mismatch (got '{}', expected '{}')",
-            state.issuer_id, token_data.claims.sub, state.issuer_id
-        );
-        return Err(StatusCode::FORBIDDEN);
-    }
-
-    state.parents.write().await.insert(payload.parent_id.clone());
-    tracing::info!("✅ {} accepted '{}' as parent", state.issuer_id, payload.parent_id);
-    Ok(Json(serde_json::json!({ "accepted": true })))
 }
 
 // ── POST /exchange_token ───────────────────────────────────────────────────────
@@ -147,7 +111,7 @@ pub async fn exchange_token(
         // Local: cryptographic verification against the cached public key.
         let dk = decoding_key_for(&child_node.public_key.n, &child_node.public_key.e)?;
         let token_data = decode::<FtpJwtClaims>(
-            &payload.child_token, &dk, &ftp_validation(&payload.child_issuer_id),
+            &payload.child_token, &dk, &fctp_validation(&payload.child_issuer_id),
         ).map_err(|e| {
             tracing::warn!("{}: invalid child JWT: {}", state.issuer_id, e);
             StatusCode::FORBIDDEN
@@ -183,7 +147,7 @@ pub async fn verify_token(
     Json(payload): Json<VerifyTokenRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let dk = decoding_key_for(&state.public_key_jwk.n, &state.public_key_jwk.e)?;
-    let token_data = decode::<FtpJwtClaims>(&payload.token, &dk, &ftp_validation(&state.issuer_id))
+    let token_data = decode::<FtpJwtClaims>(&payload.token, &dk, &fctp_validation(&state.issuer_id))
         .map_err(|e| { tracing::warn!("{}: verify_token invalid JWT: {}", state.issuer_id, e); StatusCode::FORBIDDEN })?;
 
     if token_data.claims.claim != payload.claim {
