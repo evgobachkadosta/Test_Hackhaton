@@ -18,7 +18,6 @@ pub struct CachedNode {
     pub path: Vec<String>,
     pub cached_at: u64,
     pub ttl: u64,
-    pub expires_at: u64,
     pub verification_delegation: String,
 }
 

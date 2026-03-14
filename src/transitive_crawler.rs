@@ -63,7 +63,6 @@ pub async fn execute_crawl(state: SharedIssuerState) {
             path: path.clone(),
             cached_at: now,
             ttl: metadata.ttl,
-            expires_at: now + metadata.ttl,
             verification_delegation: metadata.verification_delegation,
         });
 
