@@ -35,10 +35,11 @@ pub struct IssuerState {
     pub public_key_jwk: Jwk,
     pub ttl: u64,
     pub claims: Vec<String>,
-    /// "local" or "call" — served in /.well-known/ftp-issuer metadata.
+    /// "local" or "call" — served in /.well-known/fctp-issuer metadata.
     pub verification_delegation: String,
 
     pub trusts: RwLock<HashSet<String>>,
+    /// Parents are static admin config — populated from CLI --parents flags at startup.
     pub parents: RwLock<HashSet<String>>,
     /// Keyed by issuer_id; rebuilt on every background crawl.
     pub trust_cache: RwLock<HashMap<String, CachedNode>>,
@@ -50,7 +51,7 @@ pub struct IssuerState {
 
 pub type SharedIssuerState = Arc<IssuerState>;
 
-/// JWT claims for FTP tokens issued by this node.
+/// JWT claims for FCTP tokens issued by this node.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FtpJwtClaims {
     pub iss: String,
